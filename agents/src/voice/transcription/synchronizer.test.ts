@@ -446,3 +446,49 @@ describe('TranscriptionSynchronizer playback-counter drift on a dropped frame', 
     await synchronizer.close();
   });
 });
+
+describe('TranscriptionSynchronizer pause / clear / resume', () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  async function startSpeech() {
+    const text = new MockTextOutput();
+    const downstream = new MockAudioOutput();
+    const synchronizer = new TranscriptionSynchronizer(downstream, text);
+    await synchronizer.textOutput.captureText(
+      'one two three four five six seven eight nine ten eleven twelve',
+    );
+    synchronizer.textOutput.flush();
+    // 5s of audio, so pacing alone keeps releasing words
+    const frame = new AudioFrame(new Int16Array(800), 8000, 1, 800);
+    for (let i = 0; i < 50; i++) {
+      await synchronizer.audioOutput.captureFrame(frame);
+    }
+    synchronizer.audioOutput.flush();
+    await sleep(600);
+    synchronizer.audioOutput.pause();
+    await sleep(300);
+    return { text, downstream, synchronizer, beforeCut: text.captured.join('') };
+  }
+
+  it('keeps an interrupted paused segment gated when the output resumes', async () => {
+    const { text, downstream, synchronizer, beforeCut } = await startSpeech();
+
+    // AgentActivity.cancelSpeechPause(): interrupt (clear), then resume for the next speech
+    synchronizer.audioOutput.clearBuffer();
+    synchronizer.audioOutput.resume();
+    await sleep(400);
+    expect(text.captured.join('')).toBe(beforeCut);
+
+    downstream.onPlaybackFinished({ playbackPosition: 0.6, interrupted: true });
+    await synchronizer.close();
+    expect(text.captured.join('')).toBe(beforeCut);
+  });
+
+  it('keeps releasing words when a paused segment resumes without a clear', async () => {
+    const { text, synchronizer, beforeCut } = await startSpeech();
+
+    synchronizer.audioOutput.resume();
+    await vi.waitFor(() => expect(text.captured.join('').length).toBeGreaterThan(beforeCut.length));
+    await synchronizer.close();
+  });
+});

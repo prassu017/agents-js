@@ -166,6 +166,8 @@ class SegmentSynchronizerImpl {
   private interrupted: boolean = false;
   // The audio source failed before covering the segment's text, e.g. a TTS error.
   audioTruncated: boolean = false;
+  // The segment's audio was cleared; a later resume() is for the next speech, not this one.
+  audioCleared: boolean = false;
 
   /**
    * Paces against the visible text only; stateful because a markup tag with spaces in its
@@ -362,7 +364,7 @@ class SegmentSynchronizerImpl {
       }
       this.pausedWallTime = undefined;
     }
-    if (!this.outputEnabledFuture.done) {
+    if (!this.outputEnabledFuture.done && !this.audioCleared) {
       this.outputEnabledFuture.resolve();
     }
   }
@@ -881,6 +883,10 @@ class SyncedAudioOutput extends AudioOutput {
   }
 
   clearBuffer() {
+    // Only the current segment's audio is being cleared; a rotated-out one is already closed.
+    if (this.pushedDuration > 0 && this.synchronizer._pendingRotatedSegments.length === 0) {
+      this.synchronizer._impl.audioCleared = true;
+    }
     this.nextInChainAudio.clearBuffer();
   }
 
